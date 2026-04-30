@@ -302,23 +302,10 @@ func TestAzureASOManagedControlPlaneReconcile(t *testing.T) {
 				Ready: false,
 			},
 		}
-		c := fakeClientBuilder().
-			WithObjects(cluster, asoManagedControlPlane, managedCluster, kubeconfig).
-			Build()
-		kubeConfigPatched := false
 		r := &AzureASOManagedControlPlaneReconciler{
-			Client: &FakeClient{
-				Client: c,
-				applyFunc: func(_ context.Context, obj runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
-					data, err := json.Marshal(obj)
-					g.Expect(err).NotTo(HaveOccurred())
-					kubeconfigSecret := &corev1.Secret{}
-					g.Expect(json.Unmarshal(data, kubeconfigSecret)).To(Succeed())
-					g.Expect(kubeconfigSecret.Data[secret.KubeconfigDataName]).NotTo(BeEmpty())
-					kubeConfigPatched = true
-					return nil
-				},
-			},
+			Client: fakeClientBuilder().
+				WithObjects(cluster, asoManagedControlPlane, managedCluster, kubeconfig).
+				Build(),
 			newResourceReconciler: func(_ *infrav1.AzureASOManagedControlPlane, _ []*unstructured.Unstructured) resourceReconciler {
 				return &fakeResourceReconciler{
 					reconcileFunc: func(ctx context.Context, o client.Object) error {
@@ -331,11 +318,19 @@ func TestAzureASOManagedControlPlaneReconcile(t *testing.T) {
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(result).To(Equal(ctrl.Result{}))
 
-		g.Expect(c.Get(ctx, client.ObjectKeyFromObject(asoManagedControlPlane), asoManagedControlPlane)).To(Succeed())
+		g.Expect(r.Get(ctx, client.ObjectKeyFromObject(asoManagedControlPlane), asoManagedControlPlane)).To(Succeed())
 		g.Expect(asoManagedControlPlane.Status.ControlPlaneEndpoint.Host).To(Equal("endpoint"))
 		g.Expect(asoManagedControlPlane.Status.Version).To(Equal("vCurrent"))
-		g.Expect(kubeConfigPatched).To(BeTrue())
 		g.Expect(asoManagedControlPlane.Status.Ready).To(BeTrue())
+
+		kubeconfigSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secret.Name(cluster.Name, secret.Kubeconfig),
+				Namespace: cluster.Namespace,
+			},
+		}
+		g.Expect(r.Get(ctx, client.ObjectKeyFromObject(kubeconfigSecret), kubeconfigSecret)).To(Succeed())
+		g.Expect(kubeconfigSecret.Data[secret.KubeconfigDataName]).NotTo(BeEmpty())
 	})
 
 	t.Run("successfully reconciles a kubeconfig with a token", func(t *testing.T) {
@@ -431,31 +426,10 @@ func TestAzureASOManagedControlPlaneReconcile(t *testing.T) {
 				Ready: false,
 			},
 		}
-		c := fakeClientBuilder().
-			WithObjects(cluster, asoManagedControlPlane, managedCluster, kubeconfig).
-			Build()
-		kubeConfigPatched := false
 		r := &AzureASOManagedControlPlaneReconciler{
-			Client: &FakeClient{
-				Client: c,
-				applyFunc: func(_ context.Context, obj runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
-					data, err := json.Marshal(obj)
-					g.Expect(err).NotTo(HaveOccurred())
-					kubeconfigSecret := &corev1.Secret{}
-					g.Expect(json.Unmarshal(data, kubeconfigSecret)).To(Succeed())
-					g.Expect(kubeconfigSecret.Data[secret.KubeconfigDataName]).NotTo(BeEmpty())
-					kubeConfigPatched = true
-
-					kubeconfig, err := clientcmd.Load(kubeconfigSecret.Data[secret.KubeconfigDataName])
-					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(kubeconfig.AuthInfos).To(HaveEach(Satisfy(func(user *clientcmdapi.AuthInfo) bool {
-						return user.Exec == nil &&
-							user.Token == "token"
-					})))
-
-					return nil
-				},
-			},
+			Client: fakeClientBuilder().
+				WithObjects(cluster, asoManagedControlPlane, managedCluster, kubeconfig).
+				Build(),
 			newResourceReconciler: func(_ *infrav1.AzureASOManagedControlPlane, _ []*unstructured.Unstructured) resourceReconciler {
 				return &fakeResourceReconciler{
 					reconcileFunc: func(ctx context.Context, o client.Object) error {
@@ -472,9 +446,23 @@ func TestAzureASOManagedControlPlaneReconcile(t *testing.T) {
 		g.Expect(result.Requeue).To(BeFalse()) //nolint:staticcheck
 		g.Expect(result.RequeueAfter).NotTo(BeZero())
 
-		g.Expect(c.Get(ctx, client.ObjectKeyFromObject(asoManagedControlPlane), asoManagedControlPlane)).To(Succeed())
-		g.Expect(kubeConfigPatched).To(BeTrue())
+		g.Expect(r.Get(ctx, client.ObjectKeyFromObject(asoManagedControlPlane), asoManagedControlPlane)).To(Succeed())
 		g.Expect(asoManagedControlPlane.Status.Ready).To(BeTrue())
+
+		kubeconfigSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secret.Name(cluster.Name, secret.Kubeconfig),
+				Namespace: cluster.Namespace,
+			},
+		}
+		g.Expect(r.Get(ctx, client.ObjectKeyFromObject(kubeconfigSecret), kubeconfigSecret)).To(Succeed())
+		g.Expect(kubeconfigSecret.Data[secret.KubeconfigDataName]).NotTo(BeEmpty())
+		clientConfig, err := clientcmd.Load(kubeconfigSecret.Data[secret.KubeconfigDataName])
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(clientConfig.AuthInfos).To(HaveEach(Satisfy(func(user *clientcmdapi.AuthInfo) bool {
+			return user.Exec == nil &&
+				user.Token == "token"
+		})))
 	})
 
 	t.Run("successfully reconciles a kubeconfig with a token that has expired", func(t *testing.T) {
@@ -570,31 +558,10 @@ func TestAzureASOManagedControlPlaneReconcile(t *testing.T) {
 				Ready: true,
 			},
 		}
-		c := fakeClientBuilder().
-			WithObjects(cluster, asoManagedControlPlane, managedCluster, kubeconfig).
-			Build()
-		kubeConfigPatched := false
 		r := &AzureASOManagedControlPlaneReconciler{
-			Client: &FakeClient{
-				Client: c,
-				applyFunc: func(_ context.Context, obj runtime.ApplyConfiguration, _ ...client.ApplyOption) error {
-					data, err := json.Marshal(obj)
-					g.Expect(err).NotTo(HaveOccurred())
-					kubeconfigSecret := &corev1.Secret{}
-					g.Expect(json.Unmarshal(data, kubeconfigSecret)).To(Succeed())
-					g.Expect(kubeconfigSecret.Data[secret.KubeconfigDataName]).NotTo(BeEmpty())
-					kubeConfigPatched = true
-
-					kubeconfig, err := clientcmd.Load(kubeconfigSecret.Data[secret.KubeconfigDataName])
-					g.Expect(err).NotTo(HaveOccurred())
-					g.Expect(kubeconfig.AuthInfos).To(HaveEach(Satisfy(func(user *clientcmdapi.AuthInfo) bool {
-						return user.Exec == nil &&
-							user.Token == "token"
-					})))
-
-					return nil
-				},
-			},
+			Client: fakeClientBuilder().
+				WithObjects(cluster, asoManagedControlPlane, managedCluster, kubeconfig).
+				Build(),
 			newResourceReconciler: func(_ *infrav1.AzureASOManagedControlPlane, _ []*unstructured.Unstructured) resourceReconciler {
 				return &fakeResourceReconciler{
 					reconcileFunc: func(ctx context.Context, o client.Object) error {
@@ -610,9 +577,23 @@ func TestAzureASOManagedControlPlaneReconcile(t *testing.T) {
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 
-		g.Expect(c.Get(ctx, client.ObjectKeyFromObject(asoManagedControlPlane), asoManagedControlPlane)).To(Succeed())
-		g.Expect(kubeConfigPatched).To(BeTrue())
+		g.Expect(r.Get(ctx, client.ObjectKeyFromObject(asoManagedControlPlane), asoManagedControlPlane)).To(Succeed())
 		g.Expect(asoManagedControlPlane.Status.Ready).To(BeFalse())
+
+		kubeconfigSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secret.Name(cluster.Name, secret.Kubeconfig),
+				Namespace: cluster.Namespace,
+			},
+		}
+		g.Expect(r.Get(ctx, client.ObjectKeyFromObject(kubeconfigSecret), kubeconfigSecret)).To(Succeed())
+		g.Expect(kubeconfigSecret.Data[secret.KubeconfigDataName]).NotTo(BeEmpty())
+		clientConfig, err := clientcmd.Load(kubeconfigSecret.Data[secret.KubeconfigDataName])
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(clientConfig.AuthInfos).To(HaveEach(Satisfy(func(user *clientcmdapi.AuthInfo) bool {
+			return user.Exec == nil &&
+				user.Token == "token"
+		})))
 	})
 
 	t.Run("successfully reconciles pause", func(t *testing.T) {
